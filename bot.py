@@ -8,21 +8,21 @@ from threading import Thread
 from discord import TextChannel
 import asyncio
 from datetime import datetime, timezone, timedelta
+
 # Bestand waarin aangekondigde events worden opgeslagen
 ANNOUNCED_EVENTS_FILE = "announced_events.json"
 
-# Laad eerder aangekondigde events of maak een lege set
+# Laad eerder aangekondigde events of maak een lege dict
 if os.path.exists(ANNOUNCED_EVENTS_FILE):
     with open(ANNOUNCED_EVENTS_FILE, "r") as f:
-        already_announced_events = set(json.load(f))
+        already_announced_events = json.load(f)
 else:
-    already_announced_events = set()
-
+    already_announced_events = {}  # dict: {event_id: {"message_id": ...}}
 
 # Functie om opgeslagen events bij te werken
 def save_announced_events():
     with open(ANNOUNCED_EVENTS_FILE, "w") as f:
-        json.dump(list(already_announced_events), f)
+        json.dump(already_announced_events, f)
 
 
 # Laad token uit .env
@@ -46,13 +46,10 @@ EVENT_CHANNEL_ID = 1410240534705995796
 
 # -------------------- BOT EVENTS --------------------
 
-
 @bot.event
 async def on_ready():
     print(f"{bot.user} is nu online en klaar!")
-    # Start polling van evenementen hier, na bot ready
     bot.loop.create_task(poll_guild_events())
-
 
 @bot.event
 async def on_member_join(member):
@@ -68,24 +65,20 @@ async def on_member_join(member):
 
 # -------------------- GUILD EVENTS POLLING --------------------
 
-
-
 async def poll_guild_events():
     await bot.wait_until_ready()
     if not bot.guilds:
         print("Bot zit nog in geen enkele server")
         return
-    guild = bot.guilds[0]  # neem eerste server (pas aan als meerdere)
+    guild = bot.guilds[0]
     channel = bot.get_channel(EVENT_CHANNEL_ID)
 
     while not bot.is_closed():
         try:
             events = await guild.fetch_scheduled_events()
             for event in events:
-                if event.id not in already_announced_events:
-                    already_announced_events.add(event.id)
-                    save_announced_events()
-
+                event_id_str = str(event.id)
+                if event_id_str not in already_announced_events:
                     # Bepaal locatie
                     location = getattr(event, "location", None)
                     entity_metadata = getattr(event, "entity_metadata", None)
@@ -94,26 +87,39 @@ async def poll_guild_events():
                     location_text = f"📍 Locatie: {location}" if location else "📍 Locatie: Niet opgegeven"
 
                     if isinstance(channel, TextChannel):
-                        await channel.send(
+                        msg = await channel.send(
                             f"📢 Nieuw evenement gepland!\n"
                             f"**{event.name}**\n"
                             f"🗓 Datum en tijd: {event.start_time.strftime('%d-%m-%Y %H:%M')}\n"
-                            f"{location_text}\nZorg dat je erbij bent! 🎉")
+                            f"{location_text}\nZorg dat je erbij bent! 🎉"
+                        )
+
+                        # Sla event en bericht id op
+                        already_announced_events[event_id_str] = {"message_id": msg.id}
+                        save_announced_events()
+
+                        # Verwijder bericht na 6 uur (21600 seconden)
+                        async def delete_message_later(message, delay_seconds=10):
+                            await asyncio.sleep(delay_seconds)
+                            try:
+                                await message.delete()
+                            except Exception as e:
+                                print(f"Kon bericht niet verwijderen: {e}")
+
+                        asyncio.create_task(delete_message_later(msg))
 
                         # Plan reminder 24 uur van tevoren
                         async def send_reminder(e, location_text):
                             reminder_time = e.start_time - timedelta(hours=24)
                             now = datetime.now(timezone.utc)
-                            wait_seconds = (reminder_time -
-                                            now).total_seconds()
+                            wait_seconds = (reminder_time - now).total_seconds()
                             if wait_seconds > 0:
                                 await asyncio.sleep(wait_seconds)
                             await channel.send(
                                 f"⏰ Herinnering! **{e.name}** begint over 24 uur! {location_text}"
                             )
 
-                        asyncio.create_task(send_reminder(
-                            event, location_text))
+                        asyncio.create_task(send_reminder(event, location_text))
 
         except Exception as e:
             print(f"Fout bij pollen van events: {e}")
@@ -123,7 +129,6 @@ async def poll_guild_events():
 
 # -------------------- COMMANDS --------------------
 
-
 @bot.command()
 async def test_welcome(ctx):
     channel = bot.get_channel(WELCOME_CHANNEL_ID)
@@ -131,7 +136,6 @@ async def test_welcome(ctx):
         await channel.send("Dit is een testbericht!")
     else:
         await ctx.send("Welkom-kanaal niet gevonden of geen TextChannel")
-
 
 @bot.command()
 async def test_event(ctx):
@@ -143,7 +147,6 @@ async def test_event(ctx):
         await ctx.send("Testbericht naar het evenementen-kanaal gestuurd ✅")
     else:
         await ctx.send("Evenementenkanaal niet gevonden of geen TextChannel ❌")
-
 
 @bot.command()
 async def test_reminder(ctx):
@@ -177,21 +180,17 @@ async def test_reminder(ctx):
 
 app = Flask('')
 
-
 @app.route('/')
 def home():
     return "Buddy Bot is online!"
-
 
 def run():
     port = int(os.environ.get("PORT", 3000))
     app.run(host='0.0.0.0', port=port)
 
-
 def keep_alive():
     t = Thread(target=run)
     t.start()
-
 
 keep_alive()
 
