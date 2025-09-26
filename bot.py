@@ -99,7 +99,7 @@ async def poll_guild_events():
                         save_announced_events()
 
                         # Verwijder bericht na 6 uur (21600 seconden)
-                        async def delete_message_later(message, delay_seconds=10):
+                        async def delete_message_later(message, delay_seconds=86400):
                             await asyncio.sleep(delay_seconds)
                             try:
                                 await message.delete()
