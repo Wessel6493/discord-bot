@@ -82,7 +82,8 @@ async def on_ready():
 async def on_member_join(member):
     channel = bot.get_channel(WELCOME_CHANNEL_ID)
     if isinstance(channel, TextChannel):
-        await channel.send(f"Welkom {member.mention}! 🎉")
+        await channel.send(f"Welkom {member.mention}! 🎉 Fijn dat je er bent bij Stichting YALC!\n\n"
+            "📜 **Regels:**\n1. Wees respectvol\n2. Geen spam\n3. Volg de richtlijnen van de server")
 
 # -------------------- GUILD EVENTS POLLING --------------------
 
