@@ -16,10 +16,10 @@ from mysql.connector import Error
 def create_db_connection():
     try:
         connection = mysql.connector.connect(
-            host=os.getenv("DB_HOST", "sql108.infinityfree.com"),
-            user=os.getenv("DB_USER", "if0_40050163"),
-            password=os.getenv("DB_PASSWORD", "glrNV0WDAjnS60"),
-            database=os.getenv("DB_NAME", "if0_40050163_discord_bot")
+            host=("sql.freedb.tech"),
+            user=("'freedb_Wessel Laks'"),
+            password=("#$nsBRZYemEAW7h"),
+            database=("freedb_discord_bot_db")
         )
         if connection.is_connected():
             print("✅ Verbonden met de database!")
