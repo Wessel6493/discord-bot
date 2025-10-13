@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
 from discord import TextChannel
+from discord.ui import Button, View
 import asyncio
 from datetime import datetime, timezone, timedelta
 import mysql.connector
@@ -147,6 +148,22 @@ async def poll_guild_events():
             print(f"Fout bij pollen van events: {e}")
 
         await asyncio.sleep(60)
+
+# -------------------- TICKETS --------------------
+@bot.command()
+async def ticket(ctx, *, bericht: str = None):
+    """Maak een ticketbericht in dit kanaal."""
+    if not bericht:
+        await ctx.reply("Gebruik: `!ticket <je vraag of probleem>`")
+        return
+
+    support_channel = bot.get_channel(1410241224547504208) 
+    await support_channel.send(
+        f"🎟️ **Nieuw ticket van {ctx.author.mention}:**\n> {bericht}\n\nEen stafflid zal hier reageren."
+    )
+    await ctx.reply("✅ Je ticket is verstuurd naar het supportkanaal!", ephemeral=True)
+
+
 
 # -------------------- KEEP-ALIVE --------------------
 
