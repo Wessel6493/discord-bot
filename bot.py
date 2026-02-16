@@ -11,16 +11,17 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import mysql.connector
 from mysql.connector import Error
+tickets = {} 
 
 # -------------------- DATABASE CONNECTIE --------------------
 
 def create_db_connection():
     try:
         connection = mysql.connector.connect(
-            host=("sql.freedb.tech"),
-            user=("'freedb_Wessel Laks'"),
-            password=("#$nsBRZYemEAW7h"),
-            database=("freedb_discord_bot_db")
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASS"),
+            database=os.getenv("DB_NAME")
         )
         if connection.is_connected():
             print("✅ Verbonden met de database!")
@@ -149,21 +150,90 @@ async def poll_guild_events():
 
         await asyncio.sleep(60)
 
-# -------------------- TICKETS --------------------
+# -------------------- COMMANDS --------------------
 @bot.command()
 async def ticket(ctx, *, bericht: str = None):
-    """Maak een ticketbericht in dit kanaal."""
     if not bericht:
         await ctx.reply("Gebruik: `!ticket <je vraag of probleem>`")
         return
 
-    support_channel = bot.get_channel(1410241224547504208) 
-    await support_channel.send(
-        f"🎟️ **Nieuw ticket van {ctx.author.mention}:**\n> {bericht}\n\nEen stafflid zal hier reageren."
+    support_channel = bot.get_channel(1410241224547504208)
+
+    embed_support = discord.Embed(
+        title="🎟 Nieuw Ticket",
+        description=f"**Gebruiker:** {ctx.author.mention}\n\n**Bericht:**\n{bericht}",
+        color=discord.Color.green(),
+        timestamp=discord.utils.utcnow()
     )
-    await ctx.reply("✅ Je ticket is verstuurd naar het supportkanaal!", ephemeral=True)
+    embed_support.add_field(name="User ID", value=ctx.author.id)
+    embed_support.set_footer(text="Reageer hier om het ticket te behandelen.")
+    await support_channel.send(embed=embed_support)
+
+    embed_user = discord.Embed(
+        title="🎟 Ticket Ontvangen",
+        description=f"Hi {ctx.author.name}, je ticket is succesvol aangemaakt!",
+        color=discord.Color.blue(),
+        timestamp=discord.utils.utcnow()
+    )
+    embed_user.add_field(name="Je bericht", value=bericht)
+    embed_user.set_footer(text="Een stafflid zal hier zo snel mogelijk op reageren.")
+
+    # ---- DM versturen met fallback ----
+    dm_succes = True
+    try:
+        await ctx.author.send(embed=embed_user)
+    except discord.Forbidden:
+        dm_succes = False
+
+    # ---- REGISTRATIE VAN HET TICKET ----
+    tickets[ctx.author.id] = {
+        "bericht": bericht,
+        "support_channel_message": embed_support
+    }
+
+    # ---- Bevestiging in het kanaal ----
+    if dm_succes:
+        msg = await ctx.reply("✅ Je ticket is succesvol verstuurd! Check je DM.", mention_author=False)
+    else:
+        msg = await ctx.reply("⚠️ Ik kon je geen DM sturen. Zet je DM's open.", mention_author=False)
+
+    await msg.delete(delay=10)
+    await ctx.message.delete()
 
 
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def close(ctx, user: discord.Member = None, *, reden="Ticket opgelost"):
+    if user is None:
+        await ctx.send("❌ Geef een gebruiker op om het ticket te sluiten: `!close @user [reden]`")
+        return
+
+    print("DEBUG: tickets keys:", list(tickets.keys()))
+    print("DEBUG: user.id:", user.id)
+
+    # Check of ticket bestaat
+    if user.id not in tickets:
+        await ctx.send(f"❌ Er is geen actief ticket voor {user.mention}")
+        return
+
+    embed = discord.Embed(
+        title="✅ Ticket Gesloten",
+        description=f"Door: {ctx.author.mention}\nReden: {reden}",
+        color=discord.Color.red(),
+        timestamp=discord.utils.utcnow()
+    )
+
+    # Stuur DM naar gebruiker
+    try:
+        await user.send(embed=embed)
+    except discord.Forbidden:
+        await ctx.send(f"⚠️ Kon geen DM sturen naar {user.mention}")
+
+    # Bevestiging in support channel
+    await ctx.send(f"🎟 Ticket voor {user.mention} gemarkeerd als gesloten.")
+
+    # Verwijder ticket uit dictionary
+    tickets.pop(user.id)
 
 # -------------------- KEEP-ALIVE --------------------
 
