@@ -235,6 +235,36 @@ async def close(ctx, user: discord.Member = None, *, reden="Ticket opgelost"):
     # Verwijder ticket uit dictionary
     tickets.pop(user.id)
 
+# -------------------- ERROR HANDLING --------------------
+
+@bot.event
+async def on_command_error(ctx, error):
+
+    # Command bestaat niet
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send("❌ Dit commando bestaat niet. Gebruik `!help` voor alle commando's.")
+
+    # Verplichte argumenten ontbreken
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"⚠️ Je mist een argument: `{error.param.name}`")
+
+    # Geen permissie
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("🚫 Jij hebt geen permissie om dit commando te gebruiken.")
+
+    # Bot mist permissies
+    elif isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("⚠️ Ik heb niet genoeg rechten om dit uit te voeren.")
+
+    # Fout bij !close zonder manage_messages
+    elif isinstance(error, commands.CheckFailure):
+        await ctx.send("🚫 Je hebt geen toestemming om dit commando te gebruiken.")
+
+    # Onbekende fouten
+    else:
+        print(f"Onbekende fout: {error}")
+        await ctx.send("⚠️ Er is iets misgegaan bij het uitvoeren van dit commando.")
+
 # -------------------- KEEP-ALIVE --------------------
 
 app = Flask('')
