@@ -61,8 +61,23 @@ intents.guild_scheduled_events = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+def is_admin():
+    async def predicate(ctx):
+        if ctx.author.guild_permissions.administrator:
+            return True
+
+        role_ids = [role.id for role in ctx.author.roles]
+        if ADMIN_ROLE_ID in role_ids:
+            return True
+
+        await ctx.send("🚫 Alleen admins mogen dit commando gebruiken.")
+        return False
+
+    return commands.check(predicate)
+
 WELCOME_CHANNEL_ID = 1410221365923024970
 EVENT_CHANNEL_ID = 1410240534705995796
+ADMIN_ROLE_ID = 1410222510393397389 #admin-id gekopierd met discord developer mode
 
 # -------------------- REMINDER FUNCTIE --------------------
 
@@ -202,7 +217,8 @@ async def ticket(ctx, *, bericht: str = None):
 
 
 @bot.command()
-@commands.has_permissions(manage_messages=True)
+#@commands.has_permissions(manage_messages=True)
+@is_admin()
 async def close(ctx, user: discord.Member = None, *, reden="Ticket opgelost"):
     if user is None:
         await ctx.send("❌ Geef een gebruiker op om het ticket te sluiten: `!close @user [reden]`")
