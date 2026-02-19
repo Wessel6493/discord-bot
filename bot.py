@@ -282,7 +282,7 @@ async def on_command_error(ctx, error):
         await ctx.send("⚠️ Er is iets misgegaan bij het uitvoeren van dit commando.")
 
 # -------------------- KEEP-ALIVE --------------------
-
+#ndsjfdsnfdsfnj
 app = Flask('')
 
 @app.route('/')
