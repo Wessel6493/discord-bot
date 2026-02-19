@@ -260,12 +260,10 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         await ctx.send("❌ Dit commando bestaat niet. Gebruik `!help` voor alle commando's.")
 
-    ##Dit is voor de ticket en close commands al opgelost
-    #ticket command line 172
-    #close command line 224
+    
     # Verplichte argumenten ontbreken
-   # elif isinstance(error, commands.MissingRequiredArgument):
-   #     await ctx.send(f"⚠️ Je mist een argument: `{error.param.name}`")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"⚠️ Je mist een argument: `{error.param.name}`")
 
     # Geen permissie
     elif isinstance(error, commands.MissingPermissions):
