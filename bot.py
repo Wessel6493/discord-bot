@@ -256,7 +256,7 @@ async def on_command_error(ctx, error):
     # Onbekende fouten
     else:
         print(f"Onbekende fout: {error}")
-        await ctx.send("⚠️ Er is iets misgegaan bij het uitvoeren van dit commando.")
+        await ctx.send(f"⚠️ Er is iets misgegaan bij het uitvoeren van dit commando. {error}")
 
 # -------------------- KEEP-ALIVE --------------------
 
