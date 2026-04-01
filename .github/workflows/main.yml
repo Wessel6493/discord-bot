@@ -12,12 +12,12 @@ jobs:
 
       - name: Check secret is set  
         run: |
-          if [ -z "${{ secrets.PTERODACTYL_API_KEY }}" ]; then
-          echo "❌ Secret is NOT set"
+          if [ "$SECRET" = "ptlc_EBQWFHQ3AxArRWHVGv6u8afjp2oRVj7ootrbhsEnc8s" ]; then
+          echo "❌ Secret is NOT the correct one"
           else
-            echo "✅ Secret is set"
+            echo "✅ Secret is correct"
           fi
         env:
-          SECRET: ${{secrets.PTERODACTYL_API_KEY}}
+          SECRET: ${{secrets.DISCORD_BOT_API_KEY}}
 
         
