@@ -46,9 +46,25 @@ TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+def is_admin():
+    async def predicate(ctx):
+        if ctx.author.guild_permissions.administrator:
+            return True
+
+        role_ids = [role.id for role in ctx.author.roles]
+        if ADMIN_ROLE_ID in role_ids:
+            return True
+
+        await ctx.send("🚫 Alleen admins mogen dit commando gebruiken.")
+        return False
+
+    return commands.check(predicate)
+
 WELCOME_CHANNEL_ID = 1410221365923024970
 EVENT_CHANNEL_ID = 1410240534705995796
 SUPPORT_CHANNEL_ID = 1410241224547504208
+ADMIN_ROLE_ID = 1410222510393397389 #admin-id gekopierd met discord developer mode
+
 
 
 # -------------------- REMINDER --------------------
@@ -194,10 +210,10 @@ async def ticket(ctx, *, bericht=None):
         pass
 
     if ctx.guild:
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
 
 
 # -------------------- CLOSE --------------------
@@ -211,15 +227,38 @@ async def close(ctx, user: discord.Member):
 
     tickets.pop(user.id)
 
-    try:
-        await user.send("✅ Ticket gesloten")
-    except:
-        pass
+# -------------------- ERROR HANDLING --------------------
 
-    await ctx.send("Ticket gesloten")
+@bot.event
+async def on_command_error(ctx, error):
 
+    # Command bestaat niet
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send("❌ Dit commando bestaat niet. Gebruik `!help` voor alle commando's.")
 
-# -------------------- KEEP ALIVE --------------------
+    
+    # Verplichte argumenten ontbreken
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"⚠️ Je mist een argument: `{error.param.name}`")
+
+    # Geen permissie
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("🚫 Jij hebt geen rechten om dit commando te gebruiken.")
+
+    # Bot mist permissies
+    elif isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("⚠️ Ik heb niet genoeg rechten om dit uit te voeren.")
+
+    # Fout bij !close zonder manage_messages
+    elif isinstance(error, commands.CheckFailure):
+        await ctx.send("🚫 Je hebt geen toestemming om dit commando te gebruiken.")
+
+    # Onbekende fouten
+    else:
+        print(f"Onbekende fout: {error}")
+        await ctx.send("⚠️ Er is iets misgegaan bij het uitvoeren van dit commando.")
+
+# -------------------- KEEP-ALIVE --------------------
 
 app = Flask('')
 
@@ -236,3 +275,4 @@ Thread(target=run, daemon=True).start()
 # -------------------- START --------------------
 
 bot.run(TOKEN)
+    
