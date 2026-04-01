@@ -1,19 +1,23 @@
 import os
 import discord
 import json
+import asyncio
+from datetime import datetime, timezone, timedelta
 from discord.ext import commands
 from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
 from discord import TextChannel
-from discord.ui import Button, View
-import asyncio
-from datetime import datetime, timezone, timedelta
 import mysql.connector
 from mysql.connector import Error
-tickets = {} 
 
-# -------------------- DATABASE CONNECTIE --------------------
+load_dotenv()
+
+tickets = {}
+poll_started = False
+
+
+# -------------------- DATABASE --------------------
 
 def create_db_connection():
     try:
@@ -24,232 +28,211 @@ def create_db_connection():
             database=os.getenv("DB_NAME")
         )
         if connection.is_connected():
-            print("✅ Verbonden met de database!")
+            print("✅ Verbonden met database")
             return connection
     except Error as e:
-        print(f"❌ Fout bij verbinden met de database: {e}")
+        print("DB error:", e)
         return None
+
 
 db_connection = create_db_connection()
 db_cursor = db_connection.cursor(dictionary=True) if db_connection else None
 
-# -------------------- JSON BACKUP --------------------
-
-ANNOUNCED_EVENTS_FILE = "announced_events.json"
-
-if os.path.exists(ANNOUNCED_EVENTS_FILE):
-    with open(ANNOUNCED_EVENTS_FILE, "r") as f:
-        already_announced_events = json.load(f)
-else:
-    already_announced_events = {}
-
-def save_announced_events():
-    with open(ANNOUNCED_EVENTS_FILE, "w") as f:
-        json.dump(already_announced_events, f)
 
 # -------------------- BOT SETUP --------------------
 
-load_dotenv()
 TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    raise ValueError("TOKEN is niet ingesteld in .env")
 
 intents = discord.Intents.all()
-intents.members = True
-intents.message_content = True
-intents.guild_scheduled_events = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 WELCOME_CHANNEL_ID = 1410221365923024970
 EVENT_CHANNEL_ID = 1410240534705995796
+SUPPORT_CHANNEL_ID = 1410241224547504208
 
-# -------------------- REMINDER FUNCTIE --------------------
 
-async def send_reminder(event_name, occurrence_time, loc_text, channel):
-    reminder_time = occurrence_time - timedelta(hours=24)
-    wait_seconds = (reminder_time - datetime.now(timezone.utc)).total_seconds()
-    if wait_seconds > 0:
-        await asyncio.sleep(wait_seconds)
-    await channel.send(f"⏰ Herinnering! **{event_name}** begint over 24 uur! {loc_text}")
+# -------------------- REMINDER --------------------
 
-# -------------------- BOT EVENTS --------------------
+async def send_reminder(event_name, start_time, location_text, channel):
+
+    now = datetime.now(timezone.utc)
+
+    if start_time < now:
+        return
+
+    reminder_time = start_time - timedelta(hours=24)
+    wait = (reminder_time - now).total_seconds()
+
+    if wait > 0:
+        await asyncio.sleep(wait)
+
+    await channel.send(f"⏰ Herinnering! **{event_name}** begint over 24 uur! {location_text}")
+
+
+# -------------------- READY --------------------
 
 @bot.event
 async def on_ready():
-    print(f"{bot.user} is online!")
-    bot.loop.create_task(poll_guild_events())
+    global poll_started
+    print(bot.user, "online")
+
+    if not poll_started:
+        bot.loop.create_task(poll_guild_events())
+        poll_started = True
+
+
+# -------------------- WELCOME --------------------
 
 @bot.event
 async def on_member_join(member):
-    channel = bot.get_channel(WELCOME_CHANNEL_ID)
-    if isinstance(channel, TextChannel):
-        await channel.send(f"Welkom {member.mention}! 🎉 Fijn dat je er bent bij Stichting YALC!\n\n"
-            "📜 **Regels:**\n1. Wees respectvol\n2. Geen spam\n3. Volg de richtlijnen van de server")
 
-# -------------------- GUILD EVENTS POLLING --------------------
+    channel = bot.get_channel(WELCOME_CHANNEL_ID)
+
+    if isinstance(channel, TextChannel):
+        await channel.send(
+            f"Welkom {member.mention}! 🎉\n\n"
+            "📜 **Regels:**\n1. Respect\n2. Geen spam\n3. Volg staff"
+        )
+
+
+# -------------------- EVENT POLLING --------------------
 
 async def poll_guild_events():
+
     await bot.wait_until_ready()
-    if not bot.guilds:
-        print("Bot zit nog in geen server")
-        return
 
     guild = bot.guilds[0]
     channel = bot.get_channel(EVENT_CHANNEL_ID)
 
     while not bot.is_closed():
+
         try:
+
             events = await guild.fetch_scheduled_events()
+
             for event in events:
-                event_id_str = str(event.id)
-                start_time = event.start_time.replace(microsecond=0)  # microseconds verwijderen
 
-                # Check of occurance al in DB staat
+                start_time = event.start_time.astimezone(timezone.utc).replace(microsecond=0)
+                now = datetime.now(timezone.utc)
+
+                if start_time < now:
+                    continue
+
                 exists = None
-                if db_connection and db_cursor:
-                    db_cursor.execute(
-                        "SELECT * FROM event_occurrences WHERE event_id=%s AND occurrence_time=%s",
-                        (event.id, start_time)
-                    )
-                    exists = db_cursor.fetchone()
 
-                if not exists:
-                    location = getattr(event, "location", None) or getattr(getattr(event, "entity_metadata", None), "location", None)
-                    location_text = f"📍 Locatie: {location}" if location else "📍 Locatie: Niet opgegeven"
-
-                    if isinstance(channel, TextChannel):
-                        msg = await channel.send(
-                            f"📢 Nieuw evenement!\n**{event.name}**\n"
-                            f"🗓 {start_time.strftime('%d-%m-%Y %H:%M')}\n"
-                            f"{location_text}"
+                if db_cursor:
+                    try:
+                        db_cursor.execute(
+                            "SELECT 1 FROM event_occurrences WHERE event_id=%s AND occurrence_time=%s LIMIT 1",
+                            (event.id, start_time)
                         )
+                        exists = db_cursor.fetchone()
+                    except:
+                        exists = True
 
-                        # JSON opslaan
-                        key = f"{event_id_str}_{start_time.isoformat()}"
-                        already_announced_events[key] = {"message_id": msg.id}
-                        save_announced_events()
+                if exists:
+                    continue
 
-                        # Opslaan in DB
-                        if db_connection and db_cursor:
-                            try:
-                                db_cursor.execute(
-                                    "INSERT INTO event_occurrences (event_id, message_id, occurrence_time, deleted) VALUES (%s, %s, %s, %s)",
-                                    (event.id, msg.id, start_time, 0)
-                                )
-                                db_connection.commit()
-                            except Error as e:
-                                db_connection.rollback()
-                                print(f"❌ Fout bij opslaan in DB: {e}")
+                location = getattr(event, "location", None) or getattr(
+                    getattr(event, "entity_metadata", None), "location", None)
 
-                        # Reminder plannen
-                        asyncio.create_task(send_reminder(event.name, start_time, location_text, channel))
+                location_text = f"📍 {location}" if location else "📍 Geen locatie"
+
+                msg = await channel.send(
+                    f"📢 Nieuw evenement!\n"
+                    f"**{event.name}**\n"
+                    f"🗓 {start_time.strftime('%d-%m-%Y %H:%M')}\n"
+                    f"{location_text}"
+                )
+
+                if db_cursor:
+                    try:
+                        db_cursor.execute(
+                            "INSERT INTO event_occurrences (event_id,message_id,occurrence_time,deleted) VALUES (%s,%s,%s,%s)",
+                            (event.id, msg.id, start_time, 0)
+                        )
+                        db_connection.commit()
+                    except Error as e:
+                        print("insert error:", e)
+
+                asyncio.create_task(
+                    send_reminder(event.name, start_time, location_text, channel)
+                )
 
         except Exception as e:
-            print(f"Fout bij pollen van events: {e}")
+            print("Polling error:", e)
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(300)
 
-# -------------------- COMMANDS --------------------
+
+# -------------------- TICKET --------------------
+
 @bot.command()
-async def ticket(ctx, *, bericht: str = None):
+async def ticket(ctx, *, bericht=None):
+
     if not bericht:
-        await ctx.reply("Gebruik: `!ticket <je vraag of probleem>`")
-        return
+        return await ctx.reply("Gebruik: !ticket <bericht>")
 
-    support_channel = bot.get_channel(1410241224547504208)
+    if ctx.author.id in tickets:
+        return await ctx.reply("⚠️ Je hebt al ticket")
 
-    embed_support = discord.Embed(
+    support_channel = bot.get_channel(SUPPORT_CHANNEL_ID)
+
+    embed = discord.Embed(
         title="🎟 Nieuw Ticket",
-        description=f"**Gebruiker:** {ctx.author.mention}\n\n**Bericht:**\n{bericht}",
-        color=discord.Color.green(),
-        timestamp=discord.utils.utcnow()
+        description=f"{ctx.author.mention}\n\n{bericht}",
+        color=discord.Color.green()
     )
-    embed_support.add_field(name="User ID", value=ctx.author.id)
-    embed_support.set_footer(text="Reageer hier om het ticket te behandelen.")
-    await support_channel.send(embed=embed_support)
 
-    embed_user = discord.Embed(
-        title="🎟 Ticket Ontvangen",
-        description=f"Hi {ctx.author.name}, je ticket is succesvol aangemaakt!",
-        color=discord.Color.blue(),
-        timestamp=discord.utils.utcnow()
-    )
-    embed_user.add_field(name="Je bericht", value=bericht)
-    embed_user.set_footer(text="Een stafflid zal hier zo snel mogelijk op reageren.")
+    msg = await support_channel.send(embed=embed)
 
-    # ---- DM versturen met fallback ----
-    dm_succes = True
+    tickets[ctx.author.id] = msg.id
+
     try:
-        await ctx.author.send(embed=embed_user)
-    except discord.Forbidden:
-        dm_succes = False
+        await ctx.author.send("✅ Ticket ontvangen")
+    except:
+        pass
 
-    # ---- REGISTRATIE VAN HET TICKET ----
-    tickets[ctx.author.id] = {
-        "bericht": bericht,
-        "support_channel_message": embed_support
-    }
+    if ctx.guild:
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
 
-    # ---- Bevestiging in het kanaal ----
-    if dm_succes:
-        msg = await ctx.reply("✅ Je ticket is succesvol verstuurd! Check je DM.", mention_author=False)
-    else:
-        msg = await ctx.reply("⚠️ Ik kon je geen DM sturen. Zet je DM's open.", mention_author=False)
 
-    await msg.delete(delay=10)
-    await ctx.message.delete()
-
+# -------------------- CLOSE --------------------
 
 @bot.command()
 @commands.has_permissions(manage_messages=True)
-async def close(ctx, user: discord.Member = None, *, reden="Ticket opgelost"):
-    if user is None:
-        await ctx.send("❌ Geef een gebruiker op om het ticket te sluiten: `!close @user [reden]`")
-        return
+async def close(ctx, user: discord.Member):
 
-    print("DEBUG: tickets keys:", list(tickets.keys()))
-    print("DEBUG: user.id:", user.id)
-
-    # Check of ticket bestaat
     if user.id not in tickets:
-        await ctx.send(f"❌ Er is geen actief ticket voor {user.mention}")
-        return
+        return await ctx.send("Geen ticket")
 
-    embed = discord.Embed(
-        title="✅ Ticket Gesloten",
-        description=f"Door: {ctx.author.mention}\nReden: {reden}",
-        color=discord.Color.red(),
-        timestamp=discord.utils.utcnow()
-    )
-
-    # Stuur DM naar gebruiker
-    try:
-        await user.send(embed=embed)
-    except discord.Forbidden:
-        await ctx.send(f"⚠️ Kon geen DM sturen naar {user.mention}")
-
-    # Bevestiging in support channel
-    await ctx.send(f"🎟 Ticket voor {user.mention} gemarkeerd als gesloten.")
-
-    # Verwijder ticket uit dictionary
     tickets.pop(user.id)
 
-# -------------------- KEEP-ALIVE --------------------
+    try:
+        await user.send("✅ Ticket gesloten")
+    except:
+        pass
+
+    await ctx.send("Ticket gesloten")
+
+
+# -------------------- KEEP ALIVE --------------------
 
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Buddy Bot is online!"
+    return "Bot online"
 
 def run():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=5000)
 
 Thread(target=run, daemon=True).start()
 
-# -------------------- BOT START --------------------
+
+# -------------------- START --------------------
 
 bot.run(TOKEN)
-    
