@@ -10,6 +10,16 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Check secret is set  
+        run: |
+          if [ -z "${{ secrets.PTERODACTYL_API_KEY }}" ]; then
+          echo "❌ Secret is NOT set"
+          else
+            echo "✅ Secret is set"
+          fi
+        env:
+          SECRE: ${{secrets.PTERODACTYL_API_KEY}}
+
               
       - name: HTTP Request Action
         uses: fjogeleit/http-request-action@v1.16.3
