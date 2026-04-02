@@ -63,7 +63,7 @@ def is_admin():
 WELCOME_CHANNEL_ID = 1410221365923024970
 EVENT_CHANNEL_ID = 1410240534705995796
 SUPPORT_CHANNEL_ID = 1410241224547504208
-ADMIN_ROLE_ID = 1410222510393397389 #admin-id gekopierd met discord developer mode
+ADMIN_ROLE_ID = 1410222510393397389 
 
 
 
@@ -163,16 +163,18 @@ async def poll_guild_events():
 
                 if db_cursor:
                     try:
+                        # INSERT inclusief event_name, zodat 1364 fout verdwijnt
                         db_cursor.execute(
-                            "INSERT INTO announced_events (event_id,message_id,occurance_time,deleted) VALUES (%s,%s,%s,%s)",
-                            (event.id, msg.id, start_time, 0)
+                         "INSERT INTO announced_events (event_id, message_id, occurance_time, deleted, event_name, reminder_sent) VALUES (%s, %s, %s, %s, %s, %s)",
+                         (event.id, msg.id, start_time, 0, event.name, 0)
                         )
                         db_connection.commit()
+                        print(f"✅ Event opgeslagen: {event.name} ({start_time})")
                     except Error as e:
-                        print("insert error:", e)
+                        print(f"❌ Insert error voor event {event.name}: {e}")
 
                 asyncio.create_task(
-                    send_reminder(event.name, start_time, location_text, channel)
+                    send_reminder(event.name, start_time, location_text, channel)   
                 )
 
         except Exception as e:
