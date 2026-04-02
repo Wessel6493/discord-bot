@@ -10,12 +10,17 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      -name: update bot
-       run: |
-        git pull origin main
-        
+      - name: Check secret is set  
+        run: |
+          if [ "$SECRET" = "ptlc_EBQWFHQ3AxArRWHVGv6u8afjp2oRVj7ootrbhsEnc8s" ]; then
+          echo "❌ Secret is NOT the correct one"
+          else
+            echo "✅ Secret is correct"
+          fi
+        env:
+          SECRET: ${{secrets.DISCORD_BOT_API_KEY}}
 
-
+              
       - name: HTTP Request Action
         uses: fjogeleit/http-request-action@v1.16.3
         
