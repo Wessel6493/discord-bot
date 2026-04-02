@@ -139,7 +139,7 @@ async def poll_guild_events():
                 if db_cursor:
                     try:
                         db_cursor.execute(
-                            "SELECT 1 FROM event_occurrences WHERE event_id=%s AND occurrence_time=%s LIMIT 1",
+                            "SELECT 1 FROM announced_events WHERE event_id=%s AND occurance_time=%s LIMIT 1",
                             (event.id, start_time)
                         )
                         exists = db_cursor.fetchone()
@@ -164,7 +164,7 @@ async def poll_guild_events():
                 if db_cursor:
                     try:
                         db_cursor.execute(
-                            "INSERT INTO event_occurrences (event_id,message_id,occurrence_time,deleted) VALUES (%s,%s,%s,%s)",
+                            "INSERT INTO announced_events (event_id,message_id,occurance_time,deleted) VALUES (%s,%s,%s,%s)",
                             (event.id, msg.id, start_time, 0)
                         )
                         db_connection.commit()
