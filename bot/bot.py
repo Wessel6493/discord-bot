@@ -131,11 +131,11 @@ async def poll_guild_events():
                     if success:
                         print(f"✅ Event '{event.name}' opgeslagen in database")
                     else:
-                        print(f"❌ Kon event '{event.name}' niet opslaan in database")
+                        print(f"❌ Kon event '{event.name} {event.id} {db_event}' niet opslaan in database")
 
                 # -------------------- REMINDER --------------------
                 db_event = get_event(db_connection, event.id)
-                if db_event and db_event.get("reminder_sent") is None:
+                if db_event and not db_event.get("reminder_sent"):
                     print(f"⏰ Reminder nog niet verzonden voor {event.name}, plannen")
                     asyncio.create_task(
                         send_reminder(event.name, start_time, location_text, channel, event.id)
@@ -171,6 +171,34 @@ async def ticket(ctx, *, bericht=None):
         await ctx.message.delete()
     except:
         pass
+
+# -------------------- CLOSE TICKET --------------------
+@bot.command()
+async def close(ctx):
+    if ctx.author.id not in tickets:
+        return await ctx.reply("⚠️ Je hebt geen open ticket")
+
+    support_channel = bot.get_channel(SUPPORT_CHANNEL_ID)
+    msg_id = tickets[ctx.author.id]
+
+    try:
+        msg = await support_channel.fetch_message(msg_id)
+        embed = msg.embeds[0]
+        embed.color = discord.Color.red()
+        embed.set_footer(text=f"Gesloten door {ctx.author} op {datetime.now().strftime('%d-%m-%Y %H:%M')}")
+        await msg.edit(embed=embed)
+    except:
+        pass
+
+    del tickets[ctx.author.id]
+
+    try:
+        await ctx.author.send("🔒 Je ticket is gesloten")
+        await ctx.message.delete()
+    except:
+        pass
+
+    await ctx.send(f"✅ Ticket van {ctx.author.mention} gesloten", delete_after=5)
 
 # -------------------- KEEP ALIVE --------------------
 app = Flask('')

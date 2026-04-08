@@ -31,10 +31,16 @@ def get_event(connection, event_id):
     """
     Haal event op op basis van event_id
     """
-    cursor = connection.cursor(dictionary=True)
-    query = "SELECT * FROM announced_events WHERE event_id = %s AND deleted = 0"
-    cursor.execute(query, (event_id,))
-    return cursor.fetchone()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        query = "SELECT * FROM announced_events WHERE event_id = %s AND deleted = 0"
+        cursor.execute(query, (event_id,))
+        result = cursor.fetchone()
+        print(f"🔍 Gezocht naar event_id={event_id}, gevonden: {result} record(s)")
+        return result
+    except Exception as e:
+        print(f"❌ get_event error (event_id={event_id}): {e}")
+        return None
 
 def insert_event(connection, event_id, message_id, event_name, location, occurance_time):
     """
