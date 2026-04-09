@@ -3,6 +3,7 @@ import discord
 import asyncio
 import sys
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from discord.ext import commands
 from dotenv import load_dotenv
 from flask import Flask
@@ -11,7 +12,6 @@ from discord import TextChannel
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Database functies
 from database.database import create_db_connection, get_event, insert_event, update_reminder
 
 load_dotenv()
@@ -24,45 +24,46 @@ TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-poll_started = False
-tickets = {}
-scheduled_reminders = set()
+poll_started = False   # Voorkomt dat poll loop meerdere keren start
+tickets = {}           # Actieve tickets: {message_id: {user_id}}
+scheduled_reminders = set()  # Event IDs waarvoor al een reminder gepland is
 
 # Channel IDs
 WELCOME_CHANNEL_ID = 1410221365923024970
 EVENT_CHANNEL_ID = 1410240534705995796
 SUPPORT_CHANNEL_ID = 1410241224547504208
 
+# Nederlandse tijdzone
+AMS = ZoneInfo("Europe/Amsterdam")
+
 # -------------------- REMINDER --------------------
 async def send_reminder(event_name, start_time, location_text, channel, event_id, announcement_msg_id):
-    """
-    Stuurt reminder 24 uur voor event.
-    Markeert reminder als verzonden in database.
-    """
     now = datetime.now(timezone.utc)
 
+    # Sla over als event al voorbij is
     if start_time < now:
         return
 
-    reminder_time = start_time - timedelta(hours=24)
+    # Wacht tot 24 uur voor het event (TEST: minutes=1)
+    reminder_time = start_time - timedelta(minutes=1)
     wait = (reminder_time - now).total_seconds()
     if wait > 0:
         await asyncio.sleep(wait)
 
-    # Stuur reminder, verwijder na 24 uur (als event voorbij is)
+    # Stuur reminder, verwijder na 5 seconden (TEST: 86400 = 24 uur)
     await channel.send(
         f"⏰ Herinnering! **{event_name}** begint over 24 uur! {location_text}",
-        delete_after=86400  # 24 uur in seconden
+        delete_after=5
     )
 
-    # Markeer reminder als verzonden
+    # Markeer reminder als verzonden in de database
     try:
         update_reminder(db_connection, event_id)
         print(f"⏰ Reminder gemarkeerd als verzonden: {event_name}")
     except Exception as e:
         print(f"❌ Update error: {e}")
 
-    # Wacht tot het event begint en verwijder dan het aankondigingsbericht
+    # Wacht tot event begint en verwijder dan het aankondigingsbericht
     wait_until_event = (start_time - datetime.now(timezone.utc)).total_seconds()
     if wait_until_event > 0:
         await asyncio.sleep(wait_until_event)
@@ -79,6 +80,7 @@ async def send_reminder(event_name, start_time, location_text, channel, event_id
 async def on_ready():
     global poll_started
     print(f"{bot.user} online")
+    # Start poll loop één keer
     if not poll_started:
         bot.loop.create_task(poll_guild_events())
         poll_started = True
@@ -86,6 +88,7 @@ async def on_ready():
 # -------------------- WELCOME --------------------
 @bot.event
 async def on_member_join(member):
+    # Stuur welkomstbericht bij nieuwe leden
     channel = bot.get_channel(WELCOME_CHANNEL_ID)
     if isinstance(channel, TextChannel):
         await channel.send(
@@ -95,12 +98,6 @@ async def on_member_join(member):
 
 # -------------------- EVENT POLLING --------------------
 async def poll_guild_events():
-    """
-    Poll Discord events op een rate-limit vriendelijke manier.
-    - Checkt alleen events die nog niet in de database staan.
-    - Plant reminders alleen als ze nog niet verstuurd zijn.
-    - Vermijdt spam en dubbele inserts.
-    """
     await bot.wait_until_ready()
     guild = bot.guilds[0]
     channel = bot.get_channel(EVENT_CHANNEL_ID)
@@ -114,26 +111,26 @@ async def poll_guild_events():
                 start_time = event.start_time.astimezone(timezone.utc).replace(microsecond=0)
                 now = datetime.now(timezone.utc)
 
+                # Sla voorbije events over
                 if start_time < now:
                     print(f"⏳ Event {event.name} ({event.id}) is al voorbij, skip")
                     continue
 
-                # Haal event op uit DB
                 db_event = get_event(db_connection, event.id)
 
-                # Locatie ophalen
+                # Locatie ophalen (Discord heeft twee mogelijke plekken)
                 location = getattr(event, "location", None) or getattr(
                     getattr(event, "entity_metadata", None), "location", None
                 )
                 location_text = f"📍 {location}" if location else "📍 Geen locatie"
 
-                # -------------------- NIEUW EVENT --------------------
+                # Nieuw event: nog niet in database, aankondiging sturen
                 if not db_event:
                     print(f"📢 Nieuw event gevonden: {event.name}")
                     msg = await channel.send(
                         f"📢 Nieuw evenement!\n"
                         f"**{event.name}**\n"
-                        f"🗓 {start_time.strftime('%d-%m-%Y %H:%M')}\n"
+                        f"🗓 {start_time.astimezone(AMS).strftime('%d-%m-%Y %H:%M')}\n"
                         f"{location_text}"
                     )
 
@@ -150,7 +147,7 @@ async def poll_guild_events():
                     else:
                         print(f"❌ Kon event '{event.name} {event.id} {db_event}' niet opslaan in database")
 
-                # -------------------- REMINDER --------------------
+                # Reminder plannen als nog niet verzonden en nog niet gepland
                 db_event = get_event(db_connection, event.id)
                 if db_event and not db_event.get("reminder_sent") and event.id not in scheduled_reminders:
                     scheduled_reminders.add(event.id)
@@ -164,15 +161,17 @@ async def poll_guild_events():
         except Exception as e:
             print(f"❌ Polling error: {e}")
 
-        # Poll interval rate-limit vriendelijk
-        await asyncio.sleep(600)  # check elke 10 minuten
+        # Wacht voor volgende poll (TEST: 10 seconden, PRODUCTIE: 600)
+        await asyncio.sleep(10)
 
 # -------------------- TICKET --------------------
 @bot.command()
 async def ticket(ctx, *, bericht=None):
     if not bericht:
         return await ctx.reply("Gebruik: !ticket <bericht>")
-    if ctx.author.id in tickets:
+
+    # Controleer of gebruiker al een open ticket heeft
+    if any(ticket["user_id"] == ctx.author.id for ticket in tickets.values()):
         return await ctx.reply("⚠️ Je hebt al een ticket")
 
     support_channel = bot.get_channel(SUPPORT_CHANNEL_ID)
@@ -182,9 +181,9 @@ async def ticket(ctx, *, bericht=None):
         color=discord.Color.green()
     )
     msg = await support_channel.send(embed=embed)
-    tickets[msg.id] = {
-    "user_id": ctx.author.id
-    }
+
+    # Sla ticket op met message_id als key
+    tickets[msg.id] = {"user_id": ctx.author.id}
 
     try:
         await ctx.author.send("✅ Ticket ontvangen")
@@ -195,6 +194,11 @@ async def ticket(ctx, *, bericht=None):
 # -------------------- CLOSE TICKET --------------------
 @bot.command()
 async def close(ctx, *, oplossing=None):
+
+    # Alleen uitvoerbaar in het support kanaal
+    if ctx.channel.id != SUPPORT_CHANNEL_ID:
+        return await ctx.reply("❌ Dit commando kan alleen in het support kanaal gebruikt worden")
+
     if not oplossing:
         return await ctx.reply("Gebruik: reply op ticket + !close <oplossing>")
 
@@ -210,8 +214,7 @@ async def close(ctx, *, oplossing=None):
         return await ctx.reply("❌ Dit is geen geldig ticket")
 
     support_channel = bot.get_channel(SUPPORT_CHANNEL_ID)
-    ticket_data = tickets[message_id]
-    user_id = ticket_data["user_id"]
+    user_id = tickets[message_id]["user_id"]
 
     try:
         msg = await support_channel.fetch_message(message_id)
@@ -219,40 +222,28 @@ async def close(ctx, *, oplossing=None):
         if not msg.embeds:
             return await ctx.send("❌ Geen embed gevonden")
 
+        # Pas embed aan naar rood met oplossing
         embed = msg.embeds[0]
         embed.color = discord.Color.red()
-
-        embed.add_field(
-            name="🛠 Oplossing",
-            value=oplossing,
-            inline=False
-        )
-
-        embed.set_footer(
-            text=f"Gesloten door {ctx.author} op {datetime.now().strftime('%d-%m-%Y %H:%M')}"
-        )
-
+        embed.add_field(name="🛠 Oplossing", value=oplossing, inline=False)
+        embed.set_footer(text=f"Gesloten door {ctx.author} op {datetime.now(AMS).strftime('%d-%m-%Y %H:%M')}")
         await msg.edit(embed=embed)
 
     except Exception as e:
         print(f"Error: {e}")
         return await ctx.send("❌ Kon ticket niet aanpassen")
 
-    # ✅ DM NAAR USER
+    # Stuur DM naar gebruiker met de oplossing
     try:
         user = await bot.fetch_user(user_id)
-        await user.send(
-            f"🔒 Je ticket is gesloten!\n\n"
-            f"🛠 **Oplossing:**\n{oplossing}"
-        )
+        await user.send(f"🔒 Je ticket is gesloten!\n\n🛠 **Oplossing:**\n{oplossing}")
     except Exception as e:
         print(f"DM error: {e}")
 
     del tickets[message_id]
-
     await ctx.send("✅ Ticket gesloten", delete_after=5)
 
-# -------------------- HELP COMMAND --------------------
+# -------------------- HELP --------------------
 @bot.command()
 async def help(ctx):
     embed = discord.Embed(
@@ -260,7 +251,6 @@ async def help(ctx):
         description="Hier zijn alle beschikbare commando's:",
         color=discord.Color.blue()
     )
-
     embed.add_field(
         name="🎫 Tickets",
         value=(
@@ -271,7 +261,6 @@ async def help(ctx):
         ),
         inline=False
     )
-
     embed.add_field(
         name="📅 Events",
         value=(
@@ -281,14 +270,13 @@ async def help(ctx):
         ),
         inline=False
     )
-
     embed.set_footer(text="Gebruik de commands correct 😉")
-
     await ctx.send(embed=embed)
 
 # -------------------- KEEP ALIVE --------------------
-
+# Flask server zodat de bot actief blijft op Cybrancee
 app = Flask('')
+
 @app.route('/')
 def home():
     return "Bot online"
