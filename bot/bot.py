@@ -22,10 +22,11 @@ db_connection = create_db_connection()
 # -------------------- BOT SETUP --------------------
 TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 poll_started = False
 tickets = {}
+scheduled_reminders = set()
 
 # Channel IDs
 WELCOME_CHANNEL_ID = 1410221365923024970
@@ -33,7 +34,7 @@ EVENT_CHANNEL_ID = 1410240534705995796
 SUPPORT_CHANNEL_ID = 1410241224547504208
 
 # -------------------- REMINDER --------------------
-async def send_reminder(event_name, start_time, location_text, channel, event_id):
+async def send_reminder(event_name, start_time, location_text, channel, event_id, announcement_msg_id):
     """
     Stuurt reminder 24 uur voor event.
     Markeert reminder als verzonden in database.
@@ -48,7 +49,11 @@ async def send_reminder(event_name, start_time, location_text, channel, event_id
     if wait > 0:
         await asyncio.sleep(wait)
 
-    await channel.send(f"⏰ Herinnering! **{event_name}** begint over 24 uur! {location_text}")
+    # Stuur reminder, verwijder na 24 uur (als event voorbij is)
+    await channel.send(
+        f"⏰ Herinnering! **{event_name}** begint over 24 uur! {location_text}",
+        delete_after=86400  # 24 uur in seconden
+    )
 
     # Markeer reminder als verzonden
     try:
@@ -56,6 +61,18 @@ async def send_reminder(event_name, start_time, location_text, channel, event_id
         print(f"⏰ Reminder gemarkeerd als verzonden: {event_name}")
     except Exception as e:
         print(f"❌ Update error: {e}")
+
+    # Wacht tot het event begint en verwijder dan het aankondigingsbericht
+    wait_until_event = (start_time - datetime.now(timezone.utc)).total_seconds()
+    if wait_until_event > 0:
+        await asyncio.sleep(wait_until_event)
+
+    try:
+        announcement_msg = await channel.fetch_message(announcement_msg_id)
+        await announcement_msg.delete()
+        print(f"🗑 Aankondigingsbericht verwijderd voor: {event_name}")
+    except Exception as e:
+        print(f"❌ Kon aankondigingsbericht niet verwijderen: {e}")
 
 # -------------------- READY --------------------
 @bot.event
@@ -135,10 +152,11 @@ async def poll_guild_events():
 
                 # -------------------- REMINDER --------------------
                 db_event = get_event(db_connection, event.id)
-                if db_event and not db_event.get("reminder_sent"):
+                if db_event and not db_event.get("reminder_sent") and event.id not in scheduled_reminders:
+                    scheduled_reminders.add(event.id)
                     print(f"⏰ Reminder nog niet verzonden voor {event.name}, plannen")
                     asyncio.create_task(
-                        send_reminder(event.name, start_time, location_text, channel, event.id)
+                        send_reminder(event.name, start_time, location_text, channel, event.id, db_event["message_id"])
                     )
 
         except discord.errors.HTTPException as e:
@@ -164,7 +182,9 @@ async def ticket(ctx, *, bericht=None):
         color=discord.Color.green()
     )
     msg = await support_channel.send(embed=embed)
-    tickets[ctx.author.id] = msg.id
+    tickets[msg.id] = {
+    "user_id": ctx.author.id
+    }
 
     try:
         await ctx.author.send("✅ Ticket ontvangen")
@@ -174,33 +194,100 @@ async def ticket(ctx, *, bericht=None):
 
 # -------------------- CLOSE TICKET --------------------
 @bot.command()
-async def close(ctx):
-    if ctx.author.id not in tickets:
-        return await ctx.reply("⚠️ Je hebt geen open ticket")
+async def close(ctx, *, oplossing=None):
+    if not oplossing:
+        return await ctx.reply("Gebruik: reply op ticket + !close <oplossing>")
+
+    if not ctx.message.reference:
+        return await ctx.reply("❌ Reply op het ticket bericht dat je wilt sluiten")
+
+    try:
+        message_id = ctx.message.reference.message_id
+    except:
+        return await ctx.reply("❌ Kon bericht niet vinden")
+
+    if message_id not in tickets:
+        return await ctx.reply("❌ Dit is geen geldig ticket")
 
     support_channel = bot.get_channel(SUPPORT_CHANNEL_ID)
-    msg_id = tickets[ctx.author.id]
+    ticket_data = tickets[message_id]
+    user_id = ticket_data["user_id"]
 
     try:
-        msg = await support_channel.fetch_message(msg_id)
+        msg = await support_channel.fetch_message(message_id)
+
+        if not msg.embeds:
+            return await ctx.send("❌ Geen embed gevonden")
+
         embed = msg.embeds[0]
         embed.color = discord.Color.red()
-        embed.set_footer(text=f"Gesloten door {ctx.author} op {datetime.now().strftime('%d-%m-%Y %H:%M')}")
+
+        embed.add_field(
+            name="🛠 Oplossing",
+            value=oplossing,
+            inline=False
+        )
+
+        embed.set_footer(
+            text=f"Gesloten door {ctx.author} op {datetime.now().strftime('%d-%m-%Y %H:%M')}"
+        )
+
         await msg.edit(embed=embed)
-    except:
-        pass
 
-    del tickets[ctx.author.id]
+    except Exception as e:
+        print(f"Error: {e}")
+        return await ctx.send("❌ Kon ticket niet aanpassen")
 
+    # ✅ DM NAAR USER
     try:
-        await ctx.author.send("🔒 Je ticket is gesloten")
-        await ctx.message.delete()
-    except:
-        pass
+        user = await bot.fetch_user(user_id)
+        await user.send(
+            f"🔒 Je ticket is gesloten!\n\n"
+            f"🛠 **Oplossing:**\n{oplossing}"
+        )
+    except Exception as e:
+        print(f"DM error: {e}")
 
-    await ctx.send(f"✅ Ticket van {ctx.author.mention} gesloten", delete_after=5)
+    del tickets[message_id]
+
+    await ctx.send("✅ Ticket gesloten", delete_after=5)
+
+# -------------------- HELP COMMAND --------------------
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(
+        title="📖 Help Menu",
+        description="Hier zijn alle beschikbare commando's:",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="🎫 Tickets",
+        value=(
+            "`!ticket <bericht>` - Maak een ticket aan\n"
+            "`!help` - Toon dit help menu\n"
+            "**Voor staff:**\n"
+            "`!close <oplossing>` - Sluit een ticket (reply op bericht)"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📅 Events",
+        value=(
+            "Automatisch:\n"
+            "• Nieuwe events worden gepost\n"
+            "• Herinnering 24 uur van tevoren"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="Gebruik de commands correct 😉")
+
+    await ctx.send(embed=embed)
 
 # -------------------- KEEP ALIVE --------------------
+
 app = Flask('')
 @app.route('/')
 def home():

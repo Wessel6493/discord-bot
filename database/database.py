@@ -75,10 +75,9 @@ def update_reminder(connection, event_id):
     Markeer reminder als verzonden
     """
     cursor = connection.cursor()
-    now_utc = datetime.now(timezone.utc)
     query = "UPDATE announced_events SET reminder_sent = %s WHERE event_id = %s"
     try:
-        cursor.execute(query, (now_utc, event_id))
+        cursor.execute(query, (1, event_id))
         connection.commit()
         return True
     except Error as e:
