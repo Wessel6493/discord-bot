@@ -45,7 +45,7 @@ async def send_reminder(event_name, start_time, location_text, channel, event_id
         return
 
     # Wacht tot 24 uur voor het event (TEST: minutes=1)
-    reminder_time = start_time - timedelta(minutes=1)
+    reminder_time = start_time - timedelta(hours=24)
     wait = (reminder_time - now).total_seconds()
     if wait > 0:
         await asyncio.sleep(wait)
@@ -53,7 +53,7 @@ async def send_reminder(event_name, start_time, location_text, channel, event_id
     # Stuur reminder, verwijder na 5 seconden (TEST: 86400 = 24 uur)
     await channel.send(
         f"⏰ Herinnering! **{event_name}** begint over 24 uur! {location_text}",
-        delete_after=5
+        delete_after=86400
     )
 
     # Markeer reminder als verzonden in de database
@@ -162,7 +162,7 @@ async def poll_guild_events():
             print(f"❌ Polling error: {e}")
 
         # Wacht voor volgende poll (TEST: 10 seconden, PRODUCTIE: 600)
-        await asyncio.sleep(10)
+        await asyncio.sleep(60)
 
 # -------------------- TICKET --------------------
 @bot.command()
